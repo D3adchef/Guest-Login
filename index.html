@@ -72,24 +72,27 @@
     }
 
     textarea {
-      min-height: 96px;
+      min-height: 68px;
       resize: vertical;
     }
 
-    .scan-row {
+    .button-row {
       display: grid;
-      grid-template-columns: 1fr 1fr;
+      grid-template-columns: 1fr 1fr 1fr;
       gap: 12px;
       margin-top: 20px;
     }
 
-    button {
+    button, .logs-link {
       border: none;
       border-radius: 10px;
       padding: 12px 14px;
       font-size: 15px;
       font-weight: 700;
       cursor: pointer;
+      text-decoration: none;
+      text-align: center;
+      display: inline-block;
     }
 
     .scan-btn {
@@ -97,7 +100,12 @@
       color: white;
     }
 
-    .reset-btn {
+    .save-btn {
+      background: #22c55e;
+      color: #052e16;
+    }
+
+    .clear-btn {
       background: #475569;
       color: white;
     }
@@ -119,7 +127,7 @@
 
     .bottom-section {
       display: grid;
-      grid-template-columns: 1fr 190px;
+      grid-template-columns: 1fr 220px;
       gap: 16px;
       margin-top: 28px;
       align-items: start;
@@ -189,8 +197,6 @@
       display: flex;
       flex-direction: column;
       gap: 12px;
-      min-height: 100%;
-      justify-content: flex-start;
     }
 
     .export-card h3 {
@@ -211,14 +217,16 @@
       width: 100%;
     }
 
-    .hidden {
-      display: none;
+    .logs-link {
+      background: #1e293b;
+      color: #f8fafc;
+      width: 100%;
     }
 
     @media (max-width: 800px) {
       .form-grid,
       .bottom-section,
-      .scan-row {
+      .button-row {
         grid-template-columns: 1fr;
       }
     }
@@ -235,8 +243,8 @@
       </div>
 
       <div class="field-group full">
-        <label for="rawScan">Raw Scan Data</label>
-        <textarea id="rawScan" readonly placeholder="Leave this visible for testing. Tomorrow, scan with the work scanner and screenshot this box."></textarea>
+        <label for="notes">Notes</label>
+        <textarea id="notes" placeholder="Optional notes..."></textarea>
       </div>
 
       <div class="field-group">
@@ -265,9 +273,10 @@
       </div>
     </div>
 
-    <div class="scan-row">
+    <div class="button-row">
       <button class="scan-btn" id="scanBtn" type="button">Scan ID</button>
-      <button class="reset-btn" id="resetBtn" type="button">Reset Form</button>
+      <button class="save-btn" id="saveBtn" type="button">Save</button>
+      <button class="clear-btn" id="clearBtn" type="button">Clear</button>
     </div>
 
     <div id="statusMsg" class="status">Ready.</div>
@@ -282,21 +291,22 @@
       </div>
 
       <div class="export-card">
-        <h3>Exports</h3>
-        <p>Export the current day's entries to CSV.</p>
-        <button class="export-btn" id="exportBtn" type="button">Export CSV</button>
+        <h3>Logs</h3>
+        <p>Download today's CSV or browse older saved logs.</p>
+        <button class="export-btn" id="exportBtn" type="button">Download Today CSV</button>
+        <a class="logs-link" href="logs.html">View Logs</a>
       </div>
     </div>
   </div>
 
   <script>
     const SUPABASE_URL = "https://tlzbtqiedaispfrmcmgr.supabase.co";
-    const SUPABASE_ANON_KEY = "PASTE_YOUR_PUBLISHABLE_KEY_HERE";
+    const SUPABASE_ANON_KEY = "sb_publishable_VYsQmiQmFTZuErotHoLBQA_2qpfKjLX";
 
     const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
     const scanInput = document.getElementById("scanInput");
-    const rawScan = document.getElementById("rawScan");
+    const notesInput = document.getElementById("notes");
     const nameInput = document.getElementById("name");
     const dobInput = document.getElementById("dob");
     const expInput = document.getElementById("exp");
@@ -307,10 +317,12 @@
     const entryCount = document.getElementById("entryCount");
 
     const scanBtn = document.getElementById("scanBtn");
-    const resetBtn = document.getElementById("resetBtn");
+    const saveBtn = document.getElementById("saveBtn");
+    const clearBtn = document.getElementById("clearBtn");
     const exportBtn = document.getElementById("exportBtn");
 
     let todayEntries = [];
+    let scanTimer = null;
 
     function setStatus(message, type = "") {
       statusMsg.textContent = message;
@@ -346,7 +358,7 @@
         return;
       }
 
-      const headers = ["Name", "DOB", "Expiration", "DL Number", "Date & Time"];
+      const headers = ["Name", "DOB", "Expiration", "DL Number", "Date & Time", "Notes"];
       const csvLines = [
         headers.join(","),
         ...rows.map(row =>
@@ -355,7 +367,8 @@
             escapeCSV(row.dob),
             escapeCSV(row.expiration_date),
             escapeCSV(row.dl_number),
-            escapeCSV(new Date(row.logged_at).toLocaleString())
+            escapeCSV(new Date(row.logged_at).toLocaleString()),
+            escapeCSV(row.notes)
           ].join(",")
         )
       ];
@@ -404,13 +417,40 @@
 
     function clearForm() {
       scanInput.value = "";
-      rawScan.value = "";
+      notesInput.value = "";
       nameInput.value = "";
       dobInput.value = "";
       expInput.value = "";
       dlInput.value = "";
       datetimeInput.value = "";
+      setStatus("Form cleared.");
       focusScan();
+    }
+
+    function extractField(text, code) {
+      const regex = new RegExp(code + "([^\\n\\r]*)");
+      const match = text.match(regex);
+      if (!match) return "";
+
+      let value = match[1];
+
+      value = value.split(/DAA|DAB|DAC|DAD|DAE|DAF|DAG|DAH|DAI|DAJ|DAK|DAL|DAM|DAN|DAO|DAP|DAQ|DAR|DAS|DAT|DAU|DAV|DAW|DAX|DAY|DAZ|DBA|DBB|DBC|DBD|DBE|DBF|DBG|DBH|DBI|DBJ|DBK|DBL|DBM|DBN|DBO|DBP|DBQ|DCS|DDE|DDF|DDG/)[0];
+
+      return value.trim();
+    }
+
+    function formatAAMVADate(value) {
+      if (!value) return "";
+      const cleaned = value.replace(/\D/g, "");
+      if (cleaned.length === 8) {
+        return `${cleaned.slice(0, 2)}/${cleaned.slice(2, 4)}/${cleaned.slice(4)}`;
+      }
+      return value;
+    }
+
+    function cleanNamePart(value) {
+      if (!value) return "";
+      return value.replace(/-/g, "").replace(/~/g, "").trim();
     }
 
     function parseLicenseData(text) {
@@ -421,26 +461,17 @@
         dl: ""
       };
 
-      const cleanedText = text.trim();
+      const first = cleanNamePart(extractField(text, "DAC"));
+      const middle = cleanNamePart(extractField(text, "DAD"));
+      const last = cleanNamePart(extractField(text, "DCS"));
+      const dl = extractField(text, "DAQ");
+      const dob = extractField(text, "DBB");
+      const exp = extractField(text, "DBA");
 
-      const dlMatch = cleanedText.match(/\d{6,}/);
-      if (dlMatch) {
-        result.dl = dlMatch[0];
-      }
-
-      const words = cleanedText.split(/\s+/).filter(Boolean);
-
-      if (words.length >= 2) {
-        result.name = words[1];
-      }
-
-      const dateMatches = cleanedText.match(/\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b/g);
-      if (dateMatches && dateMatches.length >= 1) {
-        result.dob = dateMatches[0] || "";
-      }
-      if (dateMatches && dateMatches.length >= 2) {
-        result.exp = dateMatches[1] || "";
-      }
+      result.name = [first, middle, last].filter(Boolean).join(" ").trim();
+      result.dl = dl;
+      result.dob = formatAAMVADate(dob);
+      result.exp = formatAAMVADate(exp);
 
       return result;
     }
@@ -469,11 +500,10 @@
       const dob = dobInput.value.trim();
       const expiration_date = expInput.value.trim();
       const dl_number = dlInput.value.trim();
-      const raw_scan = rawScan.value.trim();
+      const notes = notesInput.value.trim();
 
-      if (!visitor_name && !dl_number && !raw_scan) {
+      if (!visitor_name && !dl_number) {
         setStatus("No scan detected.", "error");
-        clearForm();
         return;
       }
 
@@ -482,7 +512,7 @@
         dob,
         expiration_date,
         dl_number,
-        raw_scan
+        notes
       };
 
       const { error } = await supabaseClient
@@ -494,15 +524,14 @@
         return;
       }
 
-      setStatus("Scan saved.", "success");
+      setStatus("Saved successfully.", "success");
       clearForm();
+      await loadTodayEntries();
     }
 
-    async function processScan() {
-      const text = scanInput.value.trim();
+    function processScan(textValue) {
+      const text = textValue.trim();
       if (!text) return;
-
-      rawScan.value = text;
 
       const parsed = parseLicenseData(text);
 
@@ -514,7 +543,7 @@
 
       scanInput.value = "";
 
-      await saveEntry();
+      setStatus("Scan captured. Review fields, then click Save.");
     }
 
     function setupRealtime() {
@@ -531,7 +560,8 @@
     }
 
     scanBtn.addEventListener("click", focusScan);
-    resetBtn.addEventListener("click", clearForm);
+    saveBtn.addEventListener("click", saveEntry);
+    clearBtn.addEventListener("click", clearForm);
 
     exportBtn.addEventListener("click", () => {
       const today = new Date();
@@ -539,14 +569,16 @@
       downloadCSV(filename, [...todayEntries].reverse());
     });
 
-    scanInput.addEventListener("keydown", event => {
-      if (event.key === "Enter") {
-        event.preventDefault();
-        processScan();
-      }
-    });
+    scanInput.addEventListener("input", () => {
+      clearTimeout(scanTimer);
 
-    scanInput.addEventListener("change", processScan);
+      scanTimer = setTimeout(() => {
+        const value = scanInput.value;
+        if (value.trim()) {
+          processScan(value);
+        }
+      }, 120);
+    });
 
     (async function init() {
       focusScan();

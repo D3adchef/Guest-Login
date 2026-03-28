@@ -1,0 +1,498 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Guest Logs</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      padding: 28px 16px;
+      background: #081225;
+      color: #f8fafc;
+      font-family: Arial, sans-serif;
+    }
+
+    .container {
+      max-width: 1100px;
+      margin: 0 auto;
+      background: #0f172a;
+      border: 1px solid #334155;
+      border-radius: 16px;
+      padding: 24px;
+      box-shadow: 0 20px 40px rgba(0, 0, 0, 0.25);
+    }
+
+    .topbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+      margin-bottom: 22px;
+      flex-wrap: wrap;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 2rem;
+    }
+
+    .back-link {
+      text-decoration: none;
+      color: #f8fafc;
+      background: #1e293b;
+      padding: 10px 14px;
+      border-radius: 10px;
+      font-weight: 700;
+    }
+
+    .controls {
+      display: grid;
+      grid-template-columns: 1fr auto auto;
+      gap: 12px;
+      margin-bottom: 22px;
+    }
+
+    input, button {
+      width: 100%;
+      padding: 12px 14px;
+      border-radius: 10px;
+      border: 1px solid #475569;
+      background: #020617;
+      color: #f8fafc;
+      font-size: 15px;
+      outline: none;
+    }
+
+    button {
+      border: none;
+      cursor: pointer;
+      font-weight: 700;
+      width: auto;
+      min-width: 140px;
+    }
+
+    .refresh-btn {
+      background: #2563eb;
+      color: white;
+    }
+
+    .today-btn {
+      background: #22c55e;
+      color: #052e16;
+    }
+
+    .status {
+      min-height: 24px;
+      margin-bottom: 18px;
+      font-size: 14px;
+      color: #93c5fd;
+    }
+
+    .status.error {
+      color: #fca5a5;
+    }
+
+    .logs-grid {
+      display: grid;
+      grid-template-columns: 220px 220px 1fr;
+      gap: 16px;
+    }
+
+    .panel {
+      border: 1px solid #334155;
+      border-radius: 12px;
+      background: #0b1220;
+      padding: 14px;
+      min-height: 420px;
+    }
+
+    .panel h2 {
+      margin: 0 0 12px;
+      font-size: 1rem;
+    }
+
+    .list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      max-height: 620px;
+      overflow-y: auto;
+    }
+
+    .item-btn, .file-card {
+      width: 100%;
+      text-align: left;
+      padding: 10px 12px;
+      border-radius: 10px;
+      border: 1px solid #334155;
+      background: #111827;
+      color: #f8fafc;
+      cursor: pointer;
+      font-size: 14px;
+    }
+
+    .item-btn.active {
+      background: #1d4ed8;
+      border-color: #3b82f6;
+    }
+
+    .file-card {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 12px;
+      align-items: center;
+    }
+
+    .file-name {
+      font-weight: 700;
+      word-break: break-word;
+    }
+
+    .file-actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .file-actions button {
+      min-width: auto;
+      padding: 10px 12px;
+      font-size: 13px;
+    }
+
+    .download-btn {
+      background: #f59e0b;
+      color: #1f2937;
+    }
+
+    .copy-btn {
+      background: #475569;
+      color: white;
+    }
+
+    .empty {
+      color: #94a3b8;
+      font-size: 14px;
+      padding: 6px 0;
+    }
+
+    @media (max-width: 900px) {
+      .controls,
+      .logs-grid {
+        grid-template-columns: 1fr;
+      }
+
+      button {
+        width: 100%;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="topbar">
+      <h1>Guest Logs</h1>
+      <a class="back-link" href="index.html">Back to Guest Login</a>
+    </div>
+
+    <div class="controls">
+      <input id="searchInput" type="text" placeholder="Search file name, year, or month..." />
+      <button id="refreshBtn" class="refresh-btn" type="button">Refresh</button>
+      <button id="todayBtn" class="today-btn" type="button">Download Today</button>
+    </div>
+
+    <div id="statusMsg" class="status">Loading logs...</div>
+
+    <div class="logs-grid">
+      <div class="panel">
+        <h2>Years</h2>
+        <div id="yearsList" class="list"></div>
+      </div>
+
+      <div class="panel">
+        <h2>Months</h2>
+        <div id="monthsList" class="list"></div>
+      </div>
+
+      <div class="panel">
+        <h2>Files</h2>
+        <div id="filesList" class="list"></div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const SUPABASE_URL = "https://tlzbtqiedaispfrmcmgr.supabase.co";
+    const SUPABASE_ANON_KEY = "sb_publishable_VYsQmiQmFTZuErotHoLBQA_2qpfKjLX";
+    const BUCKET_NAME = "archive-guest-log";
+
+    const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+    const searchInput = document.getElementById("searchInput");
+    const refreshBtn = document.getElementById("refreshBtn");
+    const todayBtn = document.getElementById("todayBtn");
+    const statusMsg = document.getElementById("statusMsg");
+    const yearsList = document.getElementById("yearsList");
+    const monthsList = document.getElementById("monthsList");
+    const filesList = document.getElementById("filesList");
+
+    let archiveTree = {};
+    let selectedYear = "";
+    let selectedMonth = "";
+
+    function setStatus(message, isError = false) {
+      statusMsg.textContent = message;
+      statusMsg.className = `status${isError ? " error" : ""}`;
+    }
+
+    function monthName(monthValue) {
+      const date = new Date(2000, Number(monthValue) - 1, 1);
+      return date.toLocaleString([], { month: "long" });
+    }
+
+    async function listFolder(path = "") {
+      const { data, error } = await supabaseClient.storage
+        .from(BUCKET_NAME)
+        .list(path, {
+          limit: 1000,
+          sortBy: { column: "name", order: "asc" }
+        });
+
+      if (error) throw error;
+      return data || [];
+    }
+
+    async function buildArchiveTree() {
+      const tree = {};
+      const yearFolders = await listFolder("archives");
+
+      for (const yearEntry of yearFolders) {
+        if (!yearEntry.id && yearEntry.name) {
+          const year = yearEntry.name;
+          tree[year] = {};
+
+          const monthFolders = await listFolder(`archives/${year}`);
+          for (const monthEntry of monthFolders) {
+            if (!monthEntry.id && monthEntry.name) {
+              const month = monthEntry.name;
+              tree[year][month] = [];
+
+              const files = await listFolder(`archives/${year}/${month}`);
+              tree[year][month] = files
+                .filter(file => file.id && file.name)
+                .map(file => ({
+                  name: file.name,
+                  path: `archives/${year}/${month}/${file.name}`
+                }));
+            }
+          }
+        }
+      }
+
+      return tree;
+    }
+
+    function renderYears() {
+      yearsList.innerHTML = "";
+      const years = Object.keys(archiveTree).sort().reverse();
+
+      if (!years.length) {
+        yearsList.innerHTML = `<div class="empty">No years found.</div>`;
+        return;
+      }
+
+      const searchTerm = searchInput.value.trim().toLowerCase();
+      const filteredYears = years.filter(year => year.toLowerCase().includes(searchTerm) || !searchTerm);
+
+      if (!filteredYears.length) {
+        yearsList.innerHTML = `<div class="empty">No matching years.</div>`;
+        return;
+      }
+
+      filteredYears.forEach(year => {
+        const btn = document.createElement("button");
+        btn.className = `item-btn${selectedYear === year ? " active" : ""}`;
+        btn.textContent = year;
+        btn.addEventListener("click", () => {
+          selectedYear = year;
+          selectedMonth = "";
+          renderYears();
+          renderMonths();
+          renderFiles();
+        });
+        yearsList.appendChild(btn);
+      });
+    }
+
+    function renderMonths() {
+      monthsList.innerHTML = "";
+
+      if (!selectedYear || !archiveTree[selectedYear]) {
+        monthsList.innerHTML = `<div class="empty">Select a year.</div>`;
+        return;
+      }
+
+      const months = Object.keys(archiveTree[selectedYear]).sort().reverse();
+
+      if (!months.length) {
+        monthsList.innerHTML = `<div class="empty">No months found.</div>`;
+        return;
+      }
+
+      const searchTerm = searchInput.value.trim().toLowerCase();
+      const filteredMonths = months.filter(month => {
+        const label = `${month} ${monthName(month)}`.toLowerCase();
+        return label.includes(searchTerm) || !searchTerm;
+      });
+
+      if (!filteredMonths.length) {
+        monthsList.innerHTML = `<div class="empty">No matching months.</div>`;
+        return;
+      }
+
+      filteredMonths.forEach(month => {
+        const btn = document.createElement("button");
+        btn.className = `item-btn${selectedMonth === month ? " active" : ""}`;
+        btn.textContent = `${month} - ${monthName(month)}`;
+        btn.addEventListener("click", () => {
+          selectedMonth = month;
+          renderMonths();
+          renderFiles();
+        });
+        monthsList.appendChild(btn);
+      });
+    }
+
+    function renderFiles() {
+      filesList.innerHTML = "";
+
+      if (!selectedYear || !selectedMonth) {
+        filesList.innerHTML = `<div class="empty">Select a year and month.</div>`;
+        return;
+      }
+
+      const files = archiveTree[selectedYear]?.[selectedMonth] || [];
+      const searchTerm = searchInput.value.trim().toLowerCase();
+
+      const filteredFiles = files.filter(file =>
+        file.name.toLowerCase().includes(searchTerm) || !searchTerm
+      );
+
+      if (!filteredFiles.length) {
+        filesList.innerHTML = `<div class="empty">No matching files.</div>`;
+        return;
+      }
+
+      filteredFiles
+        .sort((a, b) => b.name.localeCompare(a.name))
+        .forEach(file => {
+          const card = document.createElement("div");
+          card.className = "file-card";
+
+          card.innerHTML = `
+            <div class="file-name">${file.name}</div>
+            <div class="file-actions">
+              <button class="download-btn" type="button">Download</button>
+              <button class="copy-btn" type="button">Copy URL</button>
+            </div>
+          `;
+
+          const [downloadButton, copyButton] = card.querySelectorAll("button");
+
+          downloadButton.addEventListener("click", async () => {
+            try {
+              const { data, error } = await supabaseClient.storage
+                .from(BUCKET_NAME)
+                .createSignedUrl(file.path, 60);
+
+              if (error) throw error;
+
+              window.open(data.signedUrl, "_blank");
+            } catch (err) {
+              setStatus(`Download failed: ${err.message}`, true);
+            }
+          });
+
+          copyButton.addEventListener("click", async () => {
+            try {
+              const { data, error } = await supabaseClient.storage
+                .from(BUCKET_NAME)
+                .createSignedUrl(file.path, 60);
+
+              if (error) throw error;
+
+              await navigator.clipboard.writeText(data.signedUrl);
+              setStatus("Signed download URL copied.");
+            } catch (err) {
+              setStatus(`Copy failed: ${err.message}`, true);
+            }
+          });
+
+          filesList.appendChild(card);
+        });
+    }
+
+    async function loadArchives() {
+      try {
+        setStatus("Loading logs...");
+        archiveTree = await buildArchiveTree();
+
+        const years = Object.keys(archiveTree).sort().reverse();
+        if (years.length && !selectedYear) {
+          selectedYear = years[0];
+        }
+
+        const months = selectedYear ? Object.keys(archiveTree[selectedYear] || {}).sort().reverse() : [];
+        if (months.length && !selectedMonth) {
+          selectedMonth = months[0];
+        }
+
+        renderYears();
+        renderMonths();
+        renderFiles();
+        setStatus("Logs loaded.");
+      } catch (err) {
+        setStatus(`Failed to load logs: ${err.message}`, true);
+      }
+    }
+
+    async function downloadTodayLog() {
+      const now = new Date();
+      const year = String(now.getFullYear());
+      const month = String(now.getMonth() + 1).padStart(2, "0");
+      const day = String(now.getDate()).padStart(2, "0");
+      const fileName = `${year}-${month}-${day}-guest-log.csv`;
+      const path = `archives/${year}/${month}/${fileName}`;
+
+      try {
+        const { data, error } = await supabaseClient.storage
+          .from(BUCKET_NAME)
+          .createSignedUrl(path, 60);
+
+        if (error) throw error;
+
+        window.open(data.signedUrl, "_blank");
+      } catch (err) {
+        setStatus(`Today's log not found yet: ${err.message}`, true);
+      }
+    }
+
+    refreshBtn.addEventListener("click", loadArchives);
+    todayBtn.addEventListener("click", downloadTodayLog);
+
+    searchInput.addEventListener("input", () => {
+      renderYears();
+      renderMonths();
+      renderFiles();
+    });
+
+    loadArchives();
+  </script>
+</body>
+</html>
