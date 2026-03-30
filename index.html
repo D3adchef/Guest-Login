@@ -76,6 +76,23 @@
       resize: vertical;
     }
 
+    .attached-notes-wrap {
+      margin-top: 8px;
+      display: none;
+    }
+
+    .attached-notes-btn {
+      background: none;
+      border: none;
+      color: #93c5fd;
+      text-decoration: underline;
+      cursor: pointer;
+      padding: 0;
+      font-size: 14px;
+      font-weight: 700;
+      text-align: left;
+    }
+
     .button-row {
       display: grid;
       grid-template-columns: 1fr 1fr 1fr;
@@ -223,6 +240,63 @@
       width: 100%;
     }
 
+    .modal-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.65);
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+      z-index: 9999;
+    }
+
+    .modal-card {
+      width: min(500px, 100%);
+      background: #0f172a;
+      border: 1px solid #334155;
+      border-radius: 14px;
+      padding: 20px;
+      color: #f8fafc;
+      box-shadow: 0 20px 40px rgba(0, 0, 0, 0.35);
+    }
+
+    .modal-card h3 {
+      margin-top: 0;
+      margin-bottom: 12px;
+    }
+
+    .modal-note-date {
+      font-size: 13px;
+      color: #94a3b8;
+      margin-bottom: 10px;
+    }
+
+    .modal-note-text {
+      background: #020617;
+      border: 1px solid #334155;
+      border-radius: 10px;
+      padding: 12px;
+      min-height: 80px;
+      white-space: pre-wrap;
+    }
+
+    .modal-actions {
+      margin-top: 16px;
+      display: flex;
+      justify-content: flex-end;
+    }
+
+    .modal-close-btn {
+      background: #475569;
+      color: white;
+      border: none;
+      border-radius: 10px;
+      padding: 10px 14px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
     @media (max-width: 800px) {
       .form-grid,
       .bottom-section,
@@ -245,6 +319,9 @@
       <div class="field-group full">
         <label for="notes">Notes</label>
         <textarea id="notes" placeholder="Optional notes..."></textarea>
+        <div id="attachedNotesWrap" class="attached-notes-wrap">
+          <button id="attachedNotesBtn" class="attached-notes-btn" type="button">*See attached notes*</button>
+        </div>
       </div>
 
       <div class="field-group">
@@ -299,6 +376,17 @@
     </div>
   </div>
 
+  <div id="notesModal" class="modal-overlay">
+    <div class="modal-card">
+      <h3>Previous Guest Note</h3>
+      <div id="modalNoteDate" class="modal-note-date"></div>
+      <div id="modalNoteText" class="modal-note-text"></div>
+      <div class="modal-actions">
+        <button id="closeNotesModal" class="modal-close-btn" type="button">Close</button>
+      </div>
+    </div>
+  </div>
+
   <script>
     const SUPABASE_URL = "https://tlzbtqiedaispfrmcmgr.supabase.co";
     const SUPABASE_ANON_KEY = "sb_publishable_VYsQmiQmFTZuErotHoLBQA_2qpfKjLX";
@@ -321,8 +409,17 @@
     const clearBtn = document.getElementById("clearBtn");
     const exportBtn = document.getElementById("exportBtn");
 
+    const attachedNotesWrap = document.getElementById("attachedNotesWrap");
+    const attachedNotesBtn = document.getElementById("attachedNotesBtn");
+    const notesModal = document.getElementById("notesModal");
+    const modalNoteText = document.getElementById("modalNoteText");
+    const modalNoteDate = document.getElementById("modalNoteDate");
+    const closeNotesModal = document.getElementById("closeNotesModal");
+
     let todayEntries = [];
     let scanTimer = null;
+    let previousGuestNote = "";
+    let previousGuestNoteDate = "";
 
     function setStatus(message, type = "") {
       statusMsg.textContent = message;
@@ -423,6 +520,13 @@
       expInput.value = "";
       dlInput.value = "";
       datetimeInput.value = "";
+
+      previousGuestNote = "";
+      previousGuestNoteDate = "";
+      attachedNotesWrap.style.display = "none";
+      modalNoteText.textContent = "";
+      modalNoteDate.textContent = "";
+
       setStatus("Form cleared.");
       focusScan();
     }
@@ -474,6 +578,34 @@
       result.exp = formatAAMVADate(exp);
 
       return result;
+    }
+
+    async function loadPreviousGuestNote(dlNumber) {
+      previousGuestNote = "";
+      previousGuestNoteDate = "";
+      attachedNotesWrap.style.display = "none";
+
+      if (!dlNumber) return;
+
+      const { data, error } = await supabaseClient
+        .from("guest_log_entries")
+        .select("notes, logged_at")
+        .eq("dl_number", dlNumber)
+        .not("notes", "is", null)
+        .neq("notes", "")
+        .order("logged_at", { ascending: false })
+        .limit(1);
+
+      if (error) {
+        console.error("Previous note lookup failed:", error.message);
+        return;
+      }
+
+      if (data && data.length > 0) {
+        previousGuestNote = data[0].notes || "";
+        previousGuestNoteDate = data[0].logged_at || "";
+        attachedNotesWrap.style.display = "block";
+      }
     }
 
     async function loadTodayEntries() {
@@ -529,7 +661,7 @@
       await loadTodayEntries();
     }
 
-    function processScan(textValue) {
+    async function processScan(textValue) {
       const text = textValue.trim();
       if (!text) return;
 
@@ -542,6 +674,8 @@
       datetimeInput.value = nowDisplayString();
 
       scanInput.value = "";
+
+      await loadPreviousGuestNote(parsed.dl);
 
       setStatus("Scan captured. Review fields, then click Save.");
     }
@@ -578,6 +712,24 @@
           processScan(value);
         }
       }, 120);
+    });
+
+    attachedNotesBtn.addEventListener("click", () => {
+      modalNoteText.textContent = previousGuestNote || "No note found.";
+      modalNoteDate.textContent = previousGuestNoteDate
+        ? `Previous note from ${new Date(previousGuestNoteDate).toLocaleString()}`
+        : "";
+      notesModal.style.display = "flex";
+    });
+
+    closeNotesModal.addEventListener("click", () => {
+      notesModal.style.display = "none";
+    });
+
+    notesModal.addEventListener("click", (event) => {
+      if (event.target === notesModal) {
+        notesModal.style.display = "none";
+      }
     });
 
     (async function init() {
