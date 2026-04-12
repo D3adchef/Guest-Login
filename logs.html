@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <title>Guest Logs</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
   <style>
     * {
       box-sizing: border-box;
@@ -74,7 +74,7 @@
       cursor: pointer;
       font-weight: 700;
       width: auto;
-      min-width: 140px;
+      min-width: 150px;
     }
 
     .refresh-btn {
@@ -154,10 +154,17 @@
       word-break: break-word;
     }
 
+    .file-meta {
+      font-size: 12px;
+      color: #94a3b8;
+      margin-top: 4px;
+    }
+
     .file-actions {
       display: flex;
       gap: 8px;
       flex-wrap: wrap;
+      justify-content: flex-end;
     }
 
     .file-actions button {
@@ -166,7 +173,12 @@
       font-size: 13px;
     }
 
-    .download-btn {
+    .download-pdf-btn {
+      background: #22c55e;
+      color: #052e16;
+    }
+
+    .download-csv-btn {
       background: #f59e0b;
       color: #1f2937;
     }
@@ -191,6 +203,14 @@
       button {
         width: 100%;
       }
+
+      .file-card {
+        grid-template-columns: 1fr;
+      }
+
+      .file-actions {
+        justify-content: flex-start;
+      }
     }
   </style>
 </head>
@@ -202,9 +222,9 @@
     </div>
 
     <div class="controls">
-      <input id="searchInput" type="text" placeholder="Search file name, year, or month..." />
+      <input id="searchInput" type="text" placeholder="Search year, month, or file name..." />
       <button id="refreshBtn" class="refresh-btn" type="button">Refresh</button>
-      <button id="todayBtn" class="today-btn" type="button">Download Today</button>
+      <button id="todayBtn" class="today-btn" type="button">Download Today PDF</button>
     </div>
 
     <div id="statusMsg" class="status">Loading logs...</div>
@@ -228,9 +248,13 @@
   </div>
 
   <script>
-    const SUPABASE_URL = "https://tlzbtqiedaispfrmcmgr.supabase.co";
-    const SUPABASE_ANON_KEY = "sb_publishable_VYsQmiQmFTZuErotHoLBQA_2qpfKjLX";
+    const SUPABASE_URL = "https://zogiasfwygngedyrtevx.supabase.co";
+    const SUPABASE_ANON_KEY = "sb_publishable_X8nflhabq7iFmsw7eCpd8w__MwQFPn8";
     const BUCKET_NAME = "archive-guest-log";
+
+    if (!window.supabase) {
+      throw new Error("Supabase library failed to load.");
+    }
 
     const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
@@ -268,6 +292,10 @@
       return data || [];
     }
 
+    function baseFileLabel(fileName) {
+      return fileName.replace(/\.pdf$/i, "").replace(/\.csv$/i, "");
+    }
+
     async function buildArchiveTree() {
       const tree = {};
       const yearFolders = await listFolder("archives");
@@ -281,15 +309,38 @@
           for (const monthEntry of monthFolders) {
             if (!monthEntry.id && monthEntry.name) {
               const month = monthEntry.name;
-              tree[year][month] = [];
+              tree[year][month] = {};
 
               const files = await listFolder(`archives/${year}/${month}`);
-              tree[year][month] = files
+              files
                 .filter(file => file.id && file.name)
-                .map(file => ({
-                  name: file.name,
-                  path: `archives/${year}/${month}/${file.name}`
-                }));
+                .forEach(file => {
+                  const label = baseFileLabel(file.name);
+
+                  if (!tree[year][month][label]) {
+                    tree[year][month][label] = {
+                      label,
+                      pdf: null,
+                      csv: null
+                    };
+                  }
+
+                  const path = `archives/${year}/${month}/${file.name}`;
+
+                  if (file.name.toLowerCase().endsWith(".pdf")) {
+                    tree[year][month][label].pdf = {
+                      name: file.name,
+                      path
+                    };
+                  }
+
+                  if (file.name.toLowerCase().endsWith(".csv")) {
+                    tree[year][month][label].csv = {
+                      name: file.name,
+                      path
+                    };
+                  }
+                });
             }
           }
         }
@@ -369,6 +420,15 @@
       });
     }
 
+    async function getSignedUrl(path) {
+      const { data, error } = await supabaseClient.storage
+        .from(BUCKET_NAME)
+        .createSignedUrl(path, 60);
+
+      if (error) throw error;
+      return data.signedUrl;
+    }
+
     function renderFiles() {
       filesList.innerHTML = "";
 
@@ -377,65 +437,91 @@
         return;
       }
 
-      const files = archiveTree[selectedYear]?.[selectedMonth] || [];
+      const grouped = archiveTree[selectedYear]?.[selectedMonth] || {};
       const searchTerm = searchInput.value.trim().toLowerCase();
 
-      const filteredFiles = files.filter(file =>
-        file.name.toLowerCase().includes(searchTerm) || !searchTerm
-      );
+      const fileGroups = Object.values(grouped)
+        .filter(group =>
+          group.label.toLowerCase().includes(searchTerm) || !searchTerm
+        )
+        .sort((a, b) => b.label.localeCompare(a.label));
 
-      if (!filteredFiles.length) {
+      if (!fileGroups.length) {
         filesList.innerHTML = `<div class="empty">No matching files.</div>`;
         return;
       }
 
-      filteredFiles
-        .sort((a, b) => b.name.localeCompare(a.name))
-        .forEach(file => {
-          const card = document.createElement("div");
-          card.className = "file-card";
+      fileGroups.forEach(group => {
+        const card = document.createElement("div");
+        card.className = "file-card";
 
-          card.innerHTML = `
-            <div class="file-name">${file.name}</div>
-            <div class="file-actions">
-              <button class="download-btn" type="button">Download</button>
-              <button class="copy-btn" type="button">Copy URL</button>
-            </div>
-          `;
+        const fileTypeLabel = [
+          group.pdf ? "PDF" : null,
+          group.csv ? "CSV backup" : null
+        ].filter(Boolean).join(" • ");
 
-          const [downloadButton, copyButton] = card.querySelectorAll("button");
+        card.innerHTML = `
+          <div>
+            <div class="file-name">${group.label}</div>
+            <div class="file-meta">${fileTypeLabel || "No downloadable file found"}</div>
+          </div>
+          <div class="file-actions"></div>
+        `;
 
-          downloadButton.addEventListener("click", async () => {
+        const actions = card.querySelector(".file-actions");
+
+        if (group.pdf) {
+          const pdfBtn = document.createElement("button");
+          pdfBtn.className = "download-pdf-btn";
+          pdfBtn.type = "button";
+          pdfBtn.textContent = "Download PDF";
+          pdfBtn.addEventListener("click", async () => {
             try {
-              const { data, error } = await supabaseClient.storage
-                .from(BUCKET_NAME)
-                .createSignedUrl(file.path, 60);
-
-              if (error) throw error;
-
-              window.open(data.signedUrl, "_blank");
+              const signedUrl = await getSignedUrl(group.pdf.path);
+              window.open(signedUrl, "_blank");
             } catch (err) {
-              setStatus(`Download failed: ${err.message}`, true);
+              setStatus(`PDF download failed: ${err.message}`, true);
             }
           });
+          actions.appendChild(pdfBtn);
+        }
 
-          copyButton.addEventListener("click", async () => {
+        if (group.csv) {
+          const csvBtn = document.createElement("button");
+          csvBtn.className = "download-csv-btn";
+          csvBtn.type = "button";
+          csvBtn.textContent = "CSV Backup";
+          csvBtn.addEventListener("click", async () => {
             try {
-              const { data, error } = await supabaseClient.storage
-                .from(BUCKET_NAME)
-                .createSignedUrl(file.path, 60);
+              const signedUrl = await getSignedUrl(group.csv.path);
+              window.open(signedUrl, "_blank");
+            } catch (err) {
+              setStatus(`CSV download failed: ${err.message}`, true);
+            }
+          });
+          actions.appendChild(csvBtn);
+        }
 
-              if (error) throw error;
-
-              await navigator.clipboard.writeText(data.signedUrl);
+        if (group.pdf || group.csv) {
+          const copyBtn = document.createElement("button");
+          copyBtn.className = "copy-btn";
+          copyBtn.type = "button";
+          copyBtn.textContent = "Copy Link";
+          copyBtn.addEventListener("click", async () => {
+            try {
+              const target = group.pdf ? group.pdf.path : group.csv.path;
+              const signedUrl = await getSignedUrl(target);
+              await navigator.clipboard.writeText(signedUrl);
               setStatus("Signed download URL copied.");
             } catch (err) {
               setStatus(`Copy failed: ${err.message}`, true);
             }
           });
+          actions.appendChild(copyBtn);
+        }
 
-          filesList.appendChild(card);
-        });
+        filesList.appendChild(card);
+      });
     }
 
     async function loadArchives() {
@@ -467,19 +553,21 @@
       const year = String(now.getFullYear());
       const month = String(now.getMonth() + 1).padStart(2, "0");
       const day = String(now.getDate()).padStart(2, "0");
-      const fileName = `${year}-${month}-${day}-guest-log.csv`;
-      const path = `archives/${year}/${month}/${fileName}`;
+
+      const pdfPath = `archives/${year}/${month}/${year}-${month}-${day}-guest-log.pdf`;
+      const csvPath = `archives/${year}/${month}/${year}-${month}-${day}-guest-log.csv`;
 
       try {
-        const { data, error } = await supabaseClient.storage
-          .from(BUCKET_NAME)
-          .createSignedUrl(path, 60);
-
-        if (error) throw error;
-
-        window.open(data.signedUrl, "_blank");
-      } catch (err) {
-        setStatus(`Today's log not found yet: ${err.message}`, true);
+        const signedUrl = await getSignedUrl(pdfPath);
+        window.open(signedUrl, "_blank");
+      } catch (pdfErr) {
+        try {
+          const signedUrl = await getSignedUrl(csvPath);
+          window.open(signedUrl, "_blank");
+          setStatus("Today's PDF was not found. Opened CSV backup instead.");
+        } catch (csvErr) {
+          setStatus(`Today's log not found yet.`, true);
+        }
       }
     }
 
